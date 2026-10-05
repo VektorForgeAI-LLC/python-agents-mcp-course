@@ -27,7 +27,7 @@ import sys
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+import anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -35,11 +35,12 @@ from mcp.client.stdio import stdio_client
 load_dotenv()
 
 # Verify API key
-if not os.getenv("OPENAI_API_KEY"):
-    print("Error: OPENAI_API_KEY not found in .env file", file=sys.stderr)
+if not os.getenv("ANTHROPIC_API_KEY"):
+    print("Error: ANTHROPIC_API_KEY not found in .env file", file=sys.stderr)
     sys.exit(1)
 
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+anthropic_client = anthropic.Anthropic()
+MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 
 
 # ============================================================================
@@ -64,15 +65,13 @@ def parse_result(result: Any) -> Dict[str, Any]:
         return {"message": get_result_text(result)}
 
 
-def mcp_tools_to_openai(mcp_tools: List[Any]) -> List[Dict[str, Any]]:
-    """Convert MCP tools to OpenAI function format."""
+def mcp_tools_to_anthropic(mcp_tools: List[Any]) -> List[Dict[str, Any]]:
+    """Convert MCP tools to Anthropic tool format."""
     return [
         {
-            "type": "function",
             "name": t.name,
             "description": t.description or f"Tool: {t.name}",
-            "parameters": t.inputSchema if t.inputSchema else {"type": "object", "properties": {}},
-            "strict": False,
+            "input_schema": t.inputSchema if t.inputSchema else {"type": "object", "properties": {}},
         }
         for t in mcp_tools
     ]
@@ -99,36 +98,36 @@ async def run_agent_loop(
     user_message: str,
     max_iterations: int = 8
 ) -> Dict[str, Any]:
-    """Run an agent loop with OpenAI and MCP tools."""
-    input_messages = [{"role": "user", "content": user_message}]
+    """Run an agent loop with Claude and MCP tools."""
+    messages: List[Dict[str, Any]] = [{"role": "user", "content": user_message}]
 
     tool_calls: List[str] = []
     final_result: Optional[Dict[str, Any]] = None
     detected_category: Optional[str] = None
 
     for iteration in range(max_iterations):
-        response = openai_client.responses.create(
-            model="gpt-4o-mini",
-            instructions=system_prompt,
-            input=input_messages,
+        response = anthropic_client.messages.create(
+            model=MODEL,
+            max_tokens=16000,
+            system=system_prompt,
+            messages=messages,
             tools=tools,
         )
+        messages.append({"role": "assistant", "content": response.content})
 
-        # Find function calls in output
-        function_calls = [
-            item for item in response.output
-            if item.type == "function_call"
-        ]
+        # Find tool calls in the response
+        tool_uses = [block for block in response.content if block.type == "tool_use"]
 
-        if not function_calls:
+        if not tool_uses:
             break
 
-        for func_call in function_calls:
-            args = json.loads(func_call.arguments or "{}")
-            print(f"    [{iteration + 1}] {func_call.name}")
-            tool_calls.append(func_call.name)
+        tool_results: List[Dict[str, Any]] = []
+        for tool_use in tool_uses:
+            args = tool_use.input
+            print(f"    [{iteration + 1}] {tool_use.name}")
+            tool_calls.append(tool_use.name)
 
-            result = await session.call_tool(func_call.name, args)
+            result = await session.call_tool(tool_use.name, args)
             result_text = get_result_text(result)
             parsed = parse_result(result)
 
@@ -138,18 +137,18 @@ async def run_agent_loop(
                 detected_category = parsed["category"]
                 print(f"        Category: {detected_category}")
 
-            # Add to conversation - use the Responses API format
-            # The func_call object itself is an output item that can be added to input
-            input_messages.append(func_call)
-            input_messages.append({
-                "type": "function_call_output",
-                "call_id": func_call.call_id,
-                "output": result_text,
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use.id,
+                "content": result_text,
             })
 
             if (parsed.get("status") == "success" or parsed.get("success")) and \
                (parsed.get("expense_id") or parsed.get("result")):
                 final_result = parsed
+
+        # All tool results go back together in a single user message
+        messages.append({"role": "user", "content": tool_results})
 
     return {
         "tool_calls": tool_calls,
@@ -217,7 +216,7 @@ async def test_budget_boundary():
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools_result = await session.list_tools()
-            tools = mcp_tools_to_openai(tools_result.tools)
+            tools = mcp_tools_to_anthropic(tools_result.tools)
 
             system_prompt = """You must first get_category_rules, then determine category yourself.
 If receipt needed, call upload_receipt with file_data="test", file_type="image/jpeg".
@@ -244,7 +243,7 @@ Submit with your determined category. No user interaction available."""
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools_result = await session.list_tools()
-            tools = mcp_tools_to_openai(tools_result.tools)
+            tools = mcp_tools_to_anthropic(tools_result.tools)
 
             system_prompt = """Extract amount and expense_type from user.
 Call submit_expense. Follow next_action guidance.
@@ -386,7 +385,7 @@ return {
             # Test 2: Agent writes and executes a workflow
             print("\n--- Test 2: Agent writes workflow ---")
             tools_result = await session.list_tools()
-            tools = mcp_tools_to_openai(tools_result.tools)
+            tools = mcp_tools_to_anthropic(tools_result.tools)
 
             system_prompt = """You can execute Python workflows using execute_workflow.
 Available: await tools.get_expenses(), await tools.get_expense_stats(), etc.

@@ -26,7 +26,7 @@ from typing import Optional, List, Literal, Dict, Any
 
 from dotenv import load_dotenv
 from pydantic import Field
-from openai import OpenAI
+import anthropic
 from mcp.server.fastmcp import FastMCP
 
 from database import database, storage
@@ -34,8 +34,10 @@ from database import database, storage
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize Claude client for self-prompting calls.
+# A smaller, cheaper model is fine for these focused classification tasks.
+anthropic_client = anthropic.Anthropic()
+SMALL_MODEL = os.getenv("ANTHROPIC_SMALL_MODEL", "claude-haiku-4-5")
 
 # Create the MCP server
 mcp = FastMCP("expense-validate-at-source")
@@ -174,9 +176,10 @@ async def validate_semantics(
     if flags and flags.get("weekend_entertainment"):
         weekend_note = "Note: This is weekend client entertainment."
 
-    response = openai_client.responses.create(
-        model="gpt-4o-mini",
-        input=[
+    response = anthropic_client.messages.create(
+        model=SMALL_MODEL,
+        max_tokens=1024,
+        messages=[
             {
                 "role": "user",
                 "content": f"""Category: {category}
@@ -185,7 +188,7 @@ Description: "{description}"
 {weekend_note}""",
             }
         ],
-        instructions="""You validate expense report descriptions. Check for:
+        system="""You validate expense report descriptions. Check for:
 
 1. MEANINGFULNESS: Is this a real expense description or placeholder text?
    - "asdfgh" = NOT meaningful
@@ -216,11 +219,10 @@ Respond with JSON only:
   "issues": ["list of problems, empty array if valid"],
   "suggestions": ["how to fix, empty array if valid"]
 }""",
-        temperature=0,
     )
 
     # Parse response
-    text = response.output_text or ""
+    text = "".join(block.text for block in response.content if block.type == "text")
     try:
         json_match = re.search(r'\{[\s\S]*\}', text)
         if json_match:

@@ -26,17 +26,18 @@ from dotenv import load_dotenv
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from openai import OpenAI
+import anthropic
 
 # Load environment variables
 load_dotenv()
 
 # Verify API key
-if not os.environ.get("OPENAI_API_KEY"):
-    print("Error: OPENAI_API_KEY not found. Set it in .env file or environment.")
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    print("Error: ANTHROPIC_API_KEY not found. Set it in .env file or environment.")
     sys.exit(1)
 
-openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+anthropic_client = anthropic.Anthropic()
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
 
 
 # ============================================================================
@@ -69,29 +70,21 @@ class ToolResult:
         )
 
 
-# Type aliases for Responses API
-ResponsesInputItem = dict[str, Any]
-FunctionCallOutput = dict[str, Any]
-
-
 # ============================================================================
 # Helper Functions
 # ============================================================================
 
 
-def mcp_tools_to_responses_api(mcp_tools: list[types.Tool]) -> list[dict[str, Any]]:
-    """Convert MCP tools to OpenAI Responses API format."""
-    result = []
-    for tool in mcp_tools:
-        tool_def = {
-            "type": "function",
+def mcp_tools_to_anthropic(mcp_tools: list[types.Tool]) -> list[dict[str, Any]]:
+    """Convert MCP tools to Anthropic tool format."""
+    return [
+        {
             "name": tool.name,
             "description": tool.description or f"Tool: {tool.name}",
-            "parameters": tool.inputSchema if tool.inputSchema else {"type": "object", "properties": {}},
-            "strict": False,
+            "input_schema": tool.inputSchema if tool.inputSchema else {"type": "object", "properties": {}},
         }
-        result.append(tool_def)
-    return result
+        for tool in mcp_tools
+    ]
 
 
 def get_result_text(result: types.CallToolResult) -> str:
@@ -116,39 +109,14 @@ def parse_tool_result(result_text: str) -> ToolResult | None:
         return None
 
 
-def get_output_text(response: Any) -> str | None:
-    """Extract output text from Responses API response."""
-    # The Responses API provides output_text as a convenience property
-    if hasattr(response, "output_text") and response.output_text:
-        return response.output_text
-
-    # Fallback: look through output items for message content
-    if hasattr(response, "output") and response.output:
-        for item in response.output:
-            if getattr(item, "type", None) == "message":
-                content_list = getattr(item, "content", None)
-                if content_list:
-                    for content in content_list:
-                        if getattr(content, "type", None) == "output_text":
-                            text = getattr(content, "text", None)
-                            if text:
-                                return text
-
-    return None
+def get_output_text(response: anthropic.types.Message) -> str:
+    """Extract the text blocks from a Claude response."""
+    return "\n".join(block.text for block in response.content if block.type == "text")
 
 
-def has_function_calls(response: Any) -> bool:
-    """Check if response contains function calls."""
-    if not hasattr(response, "output") or not response.output:
-        return False
-    return any(getattr(item, "type", None) == "function_call" for item in response.output)
-
-
-def get_function_calls(response: Any) -> list[Any]:
-    """Get function call items from response."""
-    if not hasattr(response, "output") or not response.output:
-        return []
-    return [item for item in response.output if getattr(item, "type", None) == "function_call"]
+def get_tool_uses(response: anthropic.types.Message) -> list[anthropic.types.ToolUseBlock]:
+    """Get tool_use blocks from a Claude response."""
+    return [block for block in response.content if block.type == "tool_use"]
 
 
 # ============================================================================
@@ -177,7 +145,7 @@ async def run_agent(user_message: str) -> None:
 
             tools_result = await session.list_tools()
             mcp_tools = tools_result.tools
-            tools = mcp_tools_to_responses_api(mcp_tools)
+            tools = mcp_tools_to_anthropic(mcp_tools)
             print(f"Discovered {len(tools)} tools: {', '.join(t.name for t in mcp_tools)}\n")
 
             # MINIMAL system prompt - the agent knows NOTHING about "Failing Forward"
@@ -190,9 +158,8 @@ Today's date is {today}.
 
 Be helpful and guide the user through the expense submission process."""
 
-            # Build input for Responses API
-            # The input array holds the conversation context
-            input_messages: list[ResponsesInputItem] = [
+            # The messages array holds the conversation context
+            messages: list[anthropic.types.MessageParam] = [
                 {
                     "role": "user",
                     "content": user_message,
@@ -207,25 +174,30 @@ Be helpful and guide the user through the expense submission process."""
                 iteration += 1
                 print(f"\n--- Iteration {iteration} ---")
 
-                # Call the Responses API
-                response = openai_client.responses.create(
-                    model="gpt-4o-mini",
-                    instructions=system_instructions,
-                    input=input_messages,
+                # Call Claude
+                response = anthropic_client.messages.create(
+                    model=MODEL,
+                    max_tokens=16000,
+                    system=system_instructions,
+                    messages=messages,
                     tools=tools,
                 )
 
-                # Check if the model wants to call functions
-                if has_function_calls(response):
-                    function_calls = get_function_calls(response)
+                # Keep the full assistant turn (including tool_use blocks) in history
+                messages.append({"role": "assistant", "content": response.content})
 
-                    for function_call in function_calls:
-                        args = json.loads(function_call.arguments)
-                        print(f"\nCalling: {function_call.name}")
+                # Check if the model wants to call tools
+                tool_uses = get_tool_uses(response)
+                if tool_uses:
+                    tool_results: list[dict[str, Any]] = []
+
+                    for tool_use in tool_uses:
+                        args = tool_use.input
+                        print(f"\nCalling: {tool_use.name}")
                         print(f"Arguments: {json.dumps(args, indent=2)}")
 
                         result = await session.call_tool(
-                            name=function_call.name,
+                            name=tool_use.name,
                             arguments=args,
                         )
 
@@ -248,21 +220,15 @@ Be helpful and guide the user through the expense submission process."""
                         else:
                             print(f"  {result_text[:200]}...")
 
-                        # Add the function call and its output to the input for the next iteration
-                        # First, add the function call that was made
-                        input_messages.append({
-                            "type": "function_call",
-                            "call_id": function_call.call_id,
-                            "name": function_call.name,
-                            "arguments": function_call.arguments,
+                        # Collect the tool output for the next iteration
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": result_text,
                         })
 
-                        # Then add the function call output
-                        input_messages.append({
-                            "type": "function_call_output",
-                            "call_id": function_call.call_id,
-                            "output": result_text,
-                        })
+                    # All tool results go back together in a single user message
+                    messages.append({"role": "user", "content": tool_results})
                 else:
                     # Agent finished - show final response
                     output_text = get_output_text(response)

@@ -7,11 +7,16 @@ Supports OpenAI, Anthropic (Claude), and Google (Gemini).
 
 import os
 import json
+import ssl
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
+
+# Verify HTTPS against the operating system's certificate store (not just
+# httpx's bundled list) so this works behind antivirus/corporate TLS inspection.
+SSL_CONTEXT = ssl.create_default_context()
 
 
 # === Types ===
@@ -59,7 +64,7 @@ class LLMProvider(ABC):
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude provider."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str, model: str = "claude-opus-5-5"):
         self.api_key = api_key
         self.model = model
 
@@ -86,7 +91,7 @@ class AnthropicProvider(LLMProvider):
                 for t in tools
             ]
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=SSL_CONTEXT) as client:
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -95,7 +100,7 @@ class AnthropicProvider(LLMProvider):
                     "anthropic-version": "2023-06-01",
                 },
                 json=body,
-                timeout=60.0,
+                timeout=300.0,
             )
 
             if response.status_code != 200:
@@ -144,7 +149,7 @@ class OpenAIProvider(LLMProvider):
                 for t in tools
             ]
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=SSL_CONTEXT) as client:
             response = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={
@@ -216,7 +221,7 @@ class GeminiProvider(LLMProvider):
                 ],
             }]
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=SSL_CONTEXT) as client:
             response = await client.post(
                 url,
                 headers={"Content-Type": "application/json"},
@@ -252,8 +257,9 @@ class GeminiProvider(LLMProvider):
 def create_llm_from_env() -> LLMProvider:
     """Create an LLM provider based on environment variables."""
     if os.environ.get("ANTHROPIC_API_KEY"):
-        print("Using Anthropic Claude")
-        return AnthropicProvider(os.environ["ANTHROPIC_API_KEY"])
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
+        print(f"Using Anthropic Claude ({model})")
+        return AnthropicProvider(os.environ["ANTHROPIC_API_KEY"], model)
     if os.environ.get("OPENAI_API_KEY"):
         print("Using OpenAI")
         return OpenAIProvider(os.environ["OPENAI_API_KEY"])

@@ -28,7 +28,7 @@ from typing import Optional, Dict, Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from openai import OpenAI
+import anthropic
 from mcp.server.fastmcp import FastMCP
 
 from database import database, storage
@@ -36,8 +36,10 @@ from database import database, storage
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client for self-prompting calls
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize Claude client for self-prompting calls.
+# A smaller, cheaper model is fine for these focused classification tasks.
+anthropic_client = anthropic.Anthropic()
+SMALL_MODEL = os.getenv("ANTHROPIC_SMALL_MODEL", "claude-haiku-4-5")
 
 # Create the MCP server
 mcp = FastMCP("expense-self-prompting")
@@ -60,21 +62,22 @@ async def classify_expense(
     This is the core self-prompting function. It makes an LLM call with:
     - A FIXED, focused system prompt (same every time)
     - Only the expense description and amount (no conversation history!)
-    - Temperature 0 for consistent results
+    - A small, fast model for a narrow task
 
     The agent never sees this reasoning. It just gets the result.
     """
     print(f'[Self-Prompting] Classifying: "{description}" (${amount})', file=sys.stderr)
 
-    response = openai_client.responses.create(
-        model="gpt-4o-mini",  # Can use smaller model for focused task!
-        input=[
+    response = anthropic_client.messages.create(
+        model=SMALL_MODEL,  # Can use smaller model for focused task!
+        max_tokens=1024,
+        messages=[
             {
                 "role": "user",
                 "content": f'Expense description: "{description}"\nAmount: ${amount}',
             }
         ],
-        instructions="""You are an expense classifier. Your job is to categorize expenses into exactly one of these categories:
+        system="""You are an expense classifier. Your job is to categorize expenses into exactly one of these categories:
 
 - meals: Regular meals, snacks, coffee (not with clients or at team events)
 - client_entertainment: Meals, entertainment, or gifts for clients, customers, or prospects
@@ -94,11 +97,10 @@ Respond with JSON only:
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation of why this category"
 }""",
-        temperature=0,  # Deterministic for testing
     )
 
     # Parse the response
-    text = response.output_text or ""
+    text = "".join(block.text for block in response.content if block.type == "text")
 
     try:
         # Extract JSON from response (handle potential markdown formatting)
