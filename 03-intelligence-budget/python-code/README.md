@@ -31,11 +31,14 @@ pip install -r requirements.txt
 
 ### 3. Configure Environment
 
-Create or edit `.env` file with your OpenAI API key:
+Copy `.env.example` in the repo root to `.env` and add your Anthropic API key:
 
 ```
-OPENAI_API_KEY=your-api-key-here
+ANTHROPIC_API_KEY=your-api-key-here
 ```
+
+`ANTHROPIC_MODEL` sets the agent model used by the tests (default `claude-sonnet-5-5`), and
+`ANTHROPIC_SMALL_MODEL` sets the smaller model the self-prompting tools call (default `claude-haiku-4-5`).
 
 ## Server Files
 
@@ -108,7 +111,7 @@ database.py           # Shared mock database (expenses, approvals)
 ## Dependencies
 
 - `mcp` - Model Context Protocol Python SDK
-- `openai` - OpenAI API client (for self-prompting and tests)
+- `anthropic` - Anthropic API client (for self-prompting and tests)
 - `httpx` - HTTP client
 - `python-dotenv` - Environment variable loading
 - `pydantic` - Data validation and settings

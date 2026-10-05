@@ -2,21 +2,44 @@
 
 This repository contains Python code examples for the Coursera course "AI Agents with Model Context Protocol."
 
+> **This fork runs the examples on Claude.** The original course code uses OpenAI in modules 02 and 03.
+> On this `claude-port` branch, every example calls Claude through the Anthropic API instead. The MCP
+> servers, tools and agent patterns the course teaches are unchanged. The original code is on `main`.
+
 ## Prerequisites
 
 - Python 3.10+
 - pip
-- An API key from OpenAI, Anthropic, or Google (set in `.env` file)
+- An Anthropic API key created inside a workspace ([Console](https://console.anthropic.com/settings/keys) -> Settings -> Workspaces)
 
 ## Setup
 
-Each module has its own `python-code/` directory. To set up any module:
+1. **Create and activate a virtual environment** (once, from the repo root):
 
-```bash
-cd <module>/python-code
-pip install -r requirements.txt
-cp .env.example .env  # Then add your API key(s)
-```
+   ```bash
+   python -m venv venv
+   source venv/bin/activate        # Windows PowerShell: venv\Scripts\Activate.ps1
+   ```
+
+   The agents start their MCP servers with plain `python`, so keep the virtual environment
+   activated whenever you run the examples.
+
+2. **Install dependencies** for each module you plan to run:
+
+   ```bash
+   pip install -r 01-intro-to-mcp-agents/python-code/requirements.txt
+   pip install -r 02-failing-forward/python-code/requirements.txt
+   pip install -r 03-intelligence-budget/python-code/requirements.txt
+   ```
+
+3. **Add your API key** - copy `.env.example` to `.env` in the repo root, then paste your key after
+   `ANTHROPIC_API_KEY=`:
+
+   ```bash
+   cp .env.example .env            # Windows: copy .env.example .env
+   ```
+
+   See [Environment Setup](#environment-setup) for the available settings.
 
 ---
 
@@ -56,7 +79,7 @@ cp .env.example .env  # Then add your API key(s)
 |------|-------------|
 | `server.py` | Basic MCP tool server with `list_files` and `read_file` tools |
 | `agent.py` | Agent loop implementation (PERCEIVE→DECIDE→ACT→OBSERVE) |
-| `llm.py` | LLM integration utilities (OpenAI/Anthropic/Gemini) |
+| `llm.py` | LLM integration utilities (Anthropic by default; OpenAI/Gemini also supported) |
 | `test_server.py` | Tests server tools directly without an agent |
 | `server_with_resources.py` | Server with MCP resources for teaching agents |
 | `agent_with_learning.py` | Agent that reads resources before acting |
@@ -212,15 +235,27 @@ python test_all.py             # Run comparison tests
 
 ## Environment Setup
 
-Create a `.env` file in each module's `python-code/` directory:
+All modules read a single `.env` file in the repo root (`python-dotenv` searches upward from each
+script's folder). Start from `.env.example`:
 
-```env
-OPENAI_API_KEY=your-openai-key-here
-ANTHROPIC_API_KEY=your-anthropic-key-here
-GOOGLE_API_KEY=your-google-key-here
-```
+| Variable | Default | Used for |
+|----------|---------|----------|
+| `ANTHROPIC_API_KEY` | *(required)* | Your Anthropic API key. Must be created inside a workspace. |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | The agent model in all three modules. Use `claude-opus-5-5` for the most capable model, at about twice the cost. |
+| `ANTHROPIC_SMALL_MODEL` | `claude-haiku-4-5` | The focused "self-prompting" LLM calls made inside module 03's tools. |
 
-You only need to provide the API key(s) for the LLM provider(s) you plan to use.
+`.env` is gitignored. Never commit your real key.
+
+### Troubleshooting
+
+- **`This API key is not scoped to a workspace`** - create a new key inside a workspace in the
+  Anthropic Console and use that instead.
+- **`CERTIFICATE_VERIFY_FAILED`** - antivirus software (e.g. Norton) or a corporate proxy is inspecting
+  HTTPS traffic. Module 01's `llm.py` already verifies against the operating system's certificate store;
+  if `pip install` fails the same way, see your security software's documentation for trusting its
+  certificate in Python.
+- **`ModuleNotFoundError` when an agent starts its server** - the virtual environment isn't activated,
+  so the server was started with a Python that doesn't have the dependencies.
 
 ---
 

@@ -1,5 +1,5 @@
-mcp
-openai
+mcp>=1.0,<2
+anthropic
 httpx
 python-dotenv
 pydantic

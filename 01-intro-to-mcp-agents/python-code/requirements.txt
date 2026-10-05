@@ -1,4 +1,4 @@
-mcp
+mcp>=1.0,<2
 httpx
 python-dotenv
 pydantic

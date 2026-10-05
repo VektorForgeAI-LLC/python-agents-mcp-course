@@ -14,7 +14,7 @@ The Failing Forward pattern demonstrates four key techniques:
 ## Files
 
 - `expense_server.py` - MCP server implementing the expense submission tools
-- `expense_agent.py` - Agent that uses the tools via OpenAI's Responses API
+- `expense_agent.py` - Agent that uses the tools via Claude (Anthropic Messages API)
 - `test_failing_forward.py` - Demo script showing the pattern in action
 
 ## Setup
@@ -34,11 +34,13 @@ pip install -r requirements.txt
 
 ### 3. Configure Environment
 
-Create a `.env` file with your OpenAI API key:
+Copy `.env.example` in the repo root to `.env` and add your Anthropic API key:
 
 ```
-OPENAI_API_KEY=your-api-key-here
+ANTHROPIC_API_KEY=your-api-key-here
 ```
+
+`ANTHROPIC_MODEL` in the same file chooses the Claude model (default `claude-sonnet-5-5`).
 
 ## Running the Demo
 

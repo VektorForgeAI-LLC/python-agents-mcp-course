@@ -5,10 +5,8 @@ This directory contains Python implementations of the MCP (Model Context Protoco
 ## Prerequisites
 
 - Python 3.10+
-- An API key from one of:
-  - OpenAI (`OPENAI_API_KEY`)
-  - Anthropic (`ANTHROPIC_API_KEY`)
-  - Google (`GEMINI_API_KEY`)
+- An Anthropic API key (`ANTHROPIC_API_KEY`). `llm.py` also supports OpenAI (`OPENAI_API_KEY`) and
+  Google (`GEMINI_API_KEY`); Anthropic is used whenever its key is set.
 
 ## Setup
 
@@ -27,19 +25,15 @@ This directory contains Python implementations of the MCP (Model Context Protoco
 
 3. **Configure environment variables**:
 
-   Copy the `.env.example` to `.env` (or use the provided `.env`) and add your API key:
+   Copy `.env.example` in the **repo root** to `.env` and add your API key:
 
    ```bash
-   cp .env.example .env
-   # Edit .env and add your API key
+   cp ../../.env.example ../../.env
+   # Edit ../../.env and add your API key
    ```
 
-   The `.env` file should contain at least one of:
-   ```
-   OPENAI_API_KEY=your-openai-api-key
-   ANTHROPIC_API_KEY=your-anthropic-api-key
-   GEMINI_API_KEY=your-gemini-api-key
-   ```
+   The agents pick it up automatically - `python-dotenv` searches upward from this folder.
+   `ANTHROPIC_MODEL` in `.env` chooses the Claude model (default `claude-sonnet-5-5`).
 
 ## Files Overview
 
@@ -140,7 +134,13 @@ All agents follow the same pattern:
 
 ### "No API key found" Error
 
-Make sure you have a `.env` file with at least one API key set.
+Make sure the repo-root `.env` file exists and `ANTHROPIC_API_KEY` is set.
+
+### `CERTIFICATE_VERIFY_FAILED`
+
+`llm.py` verifies HTTPS against the operating system's certificate store, so this usually works behind
+antivirus or proxy TLS inspection. If you still see it, check that your security software's root
+certificate is installed in the system store.
 
 ### "Connection refused" or Similar
 
@@ -151,10 +151,10 @@ The agent spawns the server as a subprocess. Make sure:
 
 ### Timeout Errors
 
-The LLM API calls have a 60-second timeout. If you're getting timeouts:
+The LLM API calls have a 300-second timeout. If you're getting timeouts:
 - Check your internet connection
 - Verify your API key is valid
-- Try a different LLM provider
+- Try a faster model by setting `ANTHROPIC_MODEL` in `.env`
 
 ## License
 
